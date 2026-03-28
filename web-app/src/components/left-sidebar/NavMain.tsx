@@ -41,6 +41,7 @@ import { useProjectDialog } from '@/hooks/useProjectDialog'
 import { useAgentMode } from '@/hooks/useAgentMode'
 import { TEMPORARY_CHAT_ID } from '@/constants/chat'
 import { PlatformShortcuts, ShortcutAction } from '@/lib/shortcuts'
+import { clearDraftChatModes, resetTemporaryChatState } from '@/lib/chat-mode'
 
 type AnimatedIconHandle =
   | SearchIconHandle
@@ -179,10 +180,14 @@ export function NavMain() {
     () => setProjectDialogOpen(true),
     () => setSearchOpen(true),
     () => {
+      resetTemporaryChatState()
+      clearDraftChatModes()
       useAgentMode.getState().removeThread(TEMPORARY_CHAT_ID)
       navigate({ to: route.home })
     },
     () => {
+      resetTemporaryChatState()
+      clearDraftChatModes()
       useAgentMode.getState().setAgentMode(TEMPORARY_CHAT_ID, true)
       navigate({ to: route.home })
     }

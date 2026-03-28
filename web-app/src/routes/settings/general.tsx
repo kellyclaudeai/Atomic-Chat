@@ -63,6 +63,9 @@ function General() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false)
   const [isValidatingToken, setIsValidatingToken] = useState(false)
+  const [braveSearchApiKey, setBraveSearchApiKey] = useState('')
+  const [isLoadingBraveKey, setIsLoadingBraveKey] = useState(false)
+  const [isSavingBraveKey, setIsSavingBraveKey] = useState(false)
   const [cliInstalled, setCliInstalled] = useState<boolean | null>(null)
   const [cliPath, setCliPath] = useState<string | null>(null)
   const [isCliLoading, setIsCliLoading] = useState(false)
@@ -74,6 +77,34 @@ function General() {
     }
 
     fetchDataFolder()
+  }, [serviceHub])
+
+  useEffect(() => {
+    if (!IS_TAURI) return
+
+    let cancelled = false
+    setIsLoadingBraveKey(true)
+
+    serviceHub
+      .app()
+      .getBraveSearchApiKey()
+      .then((apiKey) => {
+        if (!cancelled) {
+          setBraveSearchApiKey(apiKey)
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load Brave Search API key:', error)
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingBraveKey(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [serviceHub])
 
   useEffect(() => {
@@ -212,6 +243,42 @@ function General() {
       setIsCheckingUpdate(false)
     }
   }, [t, checkForUpdate])
+
+  const handleSaveBraveSearchApiKey = useCallback(async () => {
+    const trimmedKey = braveSearchApiKey.trim()
+    if (!trimmedKey) {
+      toast.error('Enter a Brave Search API key before saving')
+      return
+    }
+
+    setIsSavingBraveKey(true)
+    try {
+      await serviceHub.app().setBraveSearchApiKey(trimmedKey)
+      setBraveSearchApiKey(trimmedKey)
+      toast.success('Brave Search API key saved')
+    } catch (error) {
+      toast.error('Failed to save Brave Search API key', {
+        description: String(error),
+      })
+    } finally {
+      setIsSavingBraveKey(false)
+    }
+  }, [braveSearchApiKey, serviceHub])
+
+  const handleClearBraveSearchApiKey = useCallback(async () => {
+    setIsSavingBraveKey(true)
+    try {
+      await serviceHub.app().clearBraveSearchApiKey()
+      setBraveSearchApiKey('')
+      toast.success('Brave Search API key cleared')
+    } catch (error) {
+      toast.error('Failed to clear Brave Search API key', {
+        description: String(error),
+      })
+    } finally {
+      setIsSavingBraveKey(false)
+    }
+  }, [serviceHub])
 
   return (
     <div className="flex flex-col h-svh w-full">
@@ -536,6 +603,49 @@ function General() {
                   </div>
                 }
               />
+              {IS_TAURI && (
+                <CardItem
+                  title="Brave Search API key"
+                  description="Stored in your OS credential manager. Brave grounding is injected into prompts without saving the grounding itself in Atomic thread history."
+                  actions={
+                    <div className="flex items-center gap-2 w-full max-w-[520px]">
+                      <Input
+                        id="brave-search-api-key"
+                        type="password"
+                        value={braveSearchApiKey}
+                        onChange={(e) => setBraveSearchApiKey(e.target.value)}
+                        placeholder="BSA..."
+                        disabled={isLoadingBraveKey || isSavingBraveKey}
+                        required
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={
+                          isLoadingBraveKey ||
+                          isSavingBraveKey ||
+                          !braveSearchApiKey.trim()
+                        }
+                        onClick={handleSaveBraveSearchApiKey}
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={
+                          isLoadingBraveKey ||
+                          isSavingBraveKey ||
+                          !braveSearchApiKey.trim()
+                        }
+                        onClick={handleClearBraveSearchApiKey}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                  }
+                />
+              )}
             </Card>
 
             {/* Resources — закомментировано */}

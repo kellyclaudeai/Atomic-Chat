@@ -165,4 +165,58 @@ describe('TauriAppService', () => {
       vi.useRealTimers()
     })
   })
+
+  describe('Brave Search secure storage', () => {
+    it('should get the Brave Search API key', async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      vi.mocked(invoke).mockResolvedValue('brave-key-123')
+
+      const result = await appService.getBraveSearchApiKey()
+
+      expect(invoke).toHaveBeenCalledWith('get_brave_search_api_key')
+      expect(result).toBe('brave-key-123')
+    })
+
+    it('should save the Brave Search API key', async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      vi.mocked(invoke).mockResolvedValue(undefined)
+
+      await appService.setBraveSearchApiKey('brave-key-123')
+
+      expect(invoke).toHaveBeenCalledWith('set_brave_search_api_key', {
+        apiKey: 'brave-key-123',
+      })
+    })
+
+    it('should clear the Brave Search API key', async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      vi.mocked(invoke).mockResolvedValue(undefined)
+
+      await appService.clearBraveSearchApiKey()
+
+      expect(invoke).toHaveBeenCalledWith('clear_brave_search_api_key')
+    })
+
+    it('should fetch Brave Search grounding context', async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      vi.mocked(invoke).mockResolvedValue({
+        contextMessage: 'Live Brave grounding',
+      })
+
+      const result = await appService.getBraveSearchContext({
+        query: 'latest AI news',
+        contextWindow: 8192,
+        isIncognito: true,
+      })
+
+      expect(invoke).toHaveBeenCalledWith('get_brave_search_context', {
+        request: {
+          query: 'latest AI news',
+          contextWindow: 8192,
+          isIncognito: true,
+        },
+      })
+      expect(result).toEqual({ contextMessage: 'Live Brave grounding' })
+    })
+  })
 })

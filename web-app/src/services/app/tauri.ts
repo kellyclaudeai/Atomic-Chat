@@ -4,7 +4,11 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { AppConfiguration } from '@janhq/core'
-import type { LogEntry } from './types'
+import type {
+  BraveGroundingRequest,
+  BraveGroundingResult,
+  LogEntry,
+} from './types'
 import { DefaultAppService } from './default'
 
 export class TauriAppService extends DefaultAppService {
@@ -74,5 +78,25 @@ export class TauriAppService extends DefaultAppService {
 
   async readYaml<T = unknown>(path: string): Promise<T> {
     return await invoke<T>('read_yaml', { path })
+  }
+
+  async getBraveSearchApiKey(): Promise<string> {
+    return await invoke<string>('get_brave_search_api_key')
+  }
+
+  async setBraveSearchApiKey(apiKey: string): Promise<void> {
+    await invoke('set_brave_search_api_key', { apiKey })
+  }
+
+  async clearBraveSearchApiKey(): Promise<void> {
+    await invoke('clear_brave_search_api_key')
+  }
+
+  async getBraveSearchContext(
+    request: BraveGroundingRequest
+  ): Promise<BraveGroundingResult> {
+    return await invoke<BraveGroundingResult>('get_brave_search_context', {
+      request,
+    })
   }
 }

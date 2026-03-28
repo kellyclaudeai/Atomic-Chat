@@ -7,6 +7,7 @@ import { route } from '@/constants/routes'
 import { PlatformShortcuts, ShortcutAction } from '@/lib/shortcuts'
 import { useAgentMode } from '@/hooks/useAgentMode'
 import { TEMPORARY_CHAT_ID } from '@/constants/chat'
+import { clearDraftChatModes, resetTemporaryChatState } from '@/lib/chat-mode'
 
 export function KeyboardShortcutsProvider() {
   const { open, setLeftPanel } = useLeftPanel()
@@ -33,6 +34,8 @@ export function KeyboardShortcutsProvider() {
   useKeyboardShortcut({
     ...newChatShortcut,
     callback: () => {
+      resetTemporaryChatState()
+      clearDraftChatModes()
       useAgentMode.getState().removeThread(TEMPORARY_CHAT_ID)
       router.navigate({ to: route.home })
     },

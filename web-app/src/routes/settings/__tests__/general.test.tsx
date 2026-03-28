@@ -187,6 +187,9 @@ vi.mock('@/hooks/useServiceHub', () => ({
       factoryReset: vi.fn(),
       getJanDataFolder: vi.fn().mockResolvedValue('/test/data/folder'),
       relocateJanDataFolder: vi.fn(),
+      getBraveSearchApiKey: vi.fn().mockResolvedValue(''),
+      setBraveSearchApiKey: vi.fn(),
+      clearBraveSearchApiKey: vi.fn(),
     }),
     models: () => ({
       stopAllModels: vi.fn(),
@@ -337,7 +340,7 @@ describe('General Settings Route', () => {
       render(<Component />)
     })
 
-    const input = screen.getByTestId('input')
+    const input = screen.getAllByTestId('input')[0]
     expect(input).toBeInTheDocument()
     expect(input).toHaveValue('test-token')
   })
@@ -364,7 +367,7 @@ describe('General Settings Route', () => {
       render(<Component />)
     })
 
-    const input = screen.getByTestId('input')
+    const input = screen.getAllByTestId('input')[0]
     expect(input).toBeInTheDocument()
 
     // Test that input is interactive

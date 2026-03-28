@@ -19,6 +19,9 @@ import { useThreads } from '@/hooks/useThreads'
 import { useAttachments } from '@/hooks/useAttachments'
 import { ExtensionManager } from '@/lib/extension'
 import { ExtensionTypeEnum, VectorDBExtension } from '@janhq/core'
+import { DRAFT_CHAT_MODE_ID, TEMPORARY_CHAT_ID } from '@/constants/chat'
+import { useChatModes } from '@/hooks/useChatModes'
+import type { ServiceHub } from '@/services'
 
 export type TokenUsageCallback = (
   usage: LanguageModelUsage,
@@ -35,19 +38,6 @@ export type OnFinishCallback = (params: {
 export type OnToolCallCallback = (params: {
   toolCall: { toolCallId: string; toolName: string; input: unknown }
 }) => void
-export type ServiceHub = {
-  rag(): {
-    getTools(): Promise<
-      Array<{ name: string; description: string; inputSchema: unknown }>
-    >
-  }
-  mcp(): {
-    getTools(): Promise<
-      Array<{ name: string; description: string; inputSchema: unknown }>
-    >
-  }
-}
-
 /**
  * Wraps a UIMessageChunk stream so that when the first `text-start` chunk
  * arrives, a `text-delta` carrying `prefixText` is immediately injected into
@@ -258,6 +248,73 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
     this.continueFromContent = content
   }
 
+  private resolveContextWindow(): number | undefined {
+    const selectedModel = useModelProvider.getState().selectedModel
+    const contextValue =
+      selectedModel?.settings?.ctx_len?.controller_props?.value
+
+    if (typeof contextValue === 'number') {
+      return contextValue
+    }
+
+    if (typeof contextValue === 'string') {
+      const parsed = Number.parseInt(contextValue, 10)
+      return Number.isFinite(parsed) ? parsed : undefined
+    }
+
+    return undefined
+  }
+
+  private extractLatestUserText(messages: UIMessage[]): string | undefined {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index]
+      if (message.role !== 'user') continue
+
+      const text = (message.parts ?? [])
+        .filter(
+          (
+            part
+          ): part is Extract<(typeof message.parts)[number], { type: 'text' }> =>
+            part.type === 'text'
+        )
+        .map((part) => part.text.trim())
+        .filter(Boolean)
+        .join(' ')
+        .trim()
+
+      if (text) {
+        return text
+      }
+    }
+
+    return undefined
+  }
+
+  private async buildBraveSystemMessage(
+    messages: UIMessage[]
+  ): Promise<string | undefined> {
+    const chatModeKey = this.threadId ?? DRAFT_CHAT_MODE_ID
+    const braveEnabled =
+      useChatModes.getState().isBraveGroundingEnabled(chatModeKey)
+
+    if (!braveEnabled || !this.serviceHub) {
+      return undefined
+    }
+
+    const latestUserText = this.extractLatestUserText(messages)
+    if (!latestUserText) {
+      return undefined
+    }
+
+    const result = await this.serviceHub.app().getBraveSearchContext({
+      query: latestUserText,
+      contextWindow: this.resolveContextWindow(),
+      isIncognito: this.threadId === TEMPORARY_CHAT_ID,
+    })
+
+    return result.contextMessage?.trim() || undefined
+  }
+
   async sendMessages(
     options: {
       chatId: string
@@ -367,6 +424,13 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
       ? [...baseMessages, { role: 'assistant' as const, content: continueContent }]
       : baseMessages
 
+    const braveSystemMessage = await this.buildBraveSystemMessage(
+      options.messages
+    )
+    const effectiveSystemMessage =
+      [this.systemMessage, braveSystemMessage].filter(Boolean).join('\n\n') ||
+      undefined
+
     // Include tools only if we have tools loaded AND model supports them
     const hasTools = Object.keys(this.tools).length > 0
     const selectedModel = useModelProvider.getState().selectedModel
@@ -382,7 +446,7 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
       abortSignal: options.abortSignal,
       tools: shouldEnableTools ? this.tools : undefined,
       toolChoice: shouldEnableTools ? 'auto' : undefined,
-      system: this.systemMessage,
+      system: effectiveSystemMessage,
     })
 
     let tokensPerSecond = 0

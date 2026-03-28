@@ -1,6 +1,5 @@
 pub mod core;
 
-
 #[cfg(not(feature = "cli"))]
 use core::{
     app::commands::get_jan_data_folder_path,
@@ -108,6 +107,10 @@ pub fn run() {
         core::system::commands::install_jan_cli,
         core::system::commands::uninstall_jan_cli,
         core::system::commands::clear_claude_code_env,
+        core::system::brave_search::get_brave_search_api_key,
+        core::system::brave_search::set_brave_search_api_key,
+        core::system::brave_search::clear_brave_search_api_key,
+        core::system::brave_search::get_brave_search_context,
         // Server commands
         core::server::commands::start_server,
         core::server::commands::stop_server,
@@ -193,6 +196,10 @@ pub fn run() {
         core::system::commands::install_jan_cli,
         core::system::commands::uninstall_jan_cli,
         core::system::commands::clear_claude_code_env,
+        core::system::brave_search::get_brave_search_api_key,
+        core::system::brave_search::set_brave_search_api_key,
+        core::system::brave_search::clear_brave_search_api_key,
+        core::system::brave_search::get_brave_search_context,
         // Server commands
         core::server::commands::start_server,
         core::server::commands::stop_server,
@@ -383,7 +390,6 @@ pub fn run() {
                             log::info!("MLX processes cleaned up successfully");
                         }
                     }
-
 
                     #[cfg(feature = "foundation-models")]
                     {

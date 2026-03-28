@@ -18,7 +18,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ArrowRight, PlusIcon } from 'lucide-react'
+import { ArrowRight, EyeOff, PlusIcon } from 'lucide-react'
 import {
   IconPhoto,
   IconAtom,
@@ -41,9 +41,8 @@ import type { ChatStatus } from 'ai'
 import { useRouter } from '@tanstack/react-router'
 import { route } from '@/constants/routes'
 import {
+  DRAFT_CHAT_MODE_ID,
   TEMPORARY_CHAT_ID,
-  TEMPORARY_CHAT_QUERY_ID,
-  SESSION_STORAGE_KEY,
   SESSION_STORAGE_PREFIX,
 } from '@/constants/chat'
 import { localStorageKey } from '@/constants/localStorage'
@@ -84,6 +83,8 @@ import JanBrowserExtensionDialog from '@/containers/dialogs/JanBrowserExtensionD
 import { useJanBrowserExtension } from '@/hooks/useJanBrowserExtension'
 import { PromptVisionModel } from '@/containers/PromptVisionModel'
 import { useAgentMode } from '@/hooks/useAgentMode'
+import { useChatModes } from '@/hooks/useChatModes'
+import { clearDraftChatModes, resetTemporaryChatState } from '@/lib/chat-mode'
 
 type ChatInputProps = {
   className?: string
@@ -149,6 +150,33 @@ const ChatInput = memo(function ChatInput({
   const handleAgentToggle = useCallback(() => {
     toggleAgentMode(agentModeKey)
   }, [agentModeKey, toggleAgentMode])
+
+  const chatModeKey = currentThreadId ?? DRAFT_CHAT_MODE_ID
+  const braveGroundingEnabled = useChatModes(
+    (state) => state.braveGroundingThreads[chatModeKey] === true
+  )
+  const toggleBraveGrounding = useChatModes(
+    (state) => state.toggleBraveGrounding
+  )
+  const draftIncognitoEnabled = useChatModes(
+    (state) => state.draftIncognitoEnabled
+  )
+  const setDraftIncognitoEnabled = useChatModes(
+    (state) => state.setDraftIncognitoEnabled
+  )
+  const transferBraveGrounding = useChatModes(
+    (state) => state.transferBraveGrounding
+  )
+  const clearBraveGroundingForThread = useChatModes((state) => state.removeThread)
+
+  const isTemporaryThread = currentThreadId === TEMPORARY_CHAT_ID
+  const incognitoActive =
+    isTemporaryThread || (!currentThreadId && draftIncognitoEnabled)
+
+  const handleIncognitoToggle = useCallback(() => {
+    if (currentThreadId) return
+    setDraftIncognitoEnabled(!draftIncognitoEnabled)
+  }, [currentThreadId, draftIncognitoEnabled, setDraftIncognitoEnabled])
 
   const maxRows = 10
   const ATTACHMENT_AUTO_INLINE_FALLBACK_BYTES = 512 * 1024
@@ -349,10 +377,7 @@ const ChatInput = memo(function ChatInput({
       clearAttachmentsForThread(attachmentsKey)
     } else {
       // No onSubmit provided - create a new thread and navigate to it
-      // Store the initial message in sessionStorage for the thread page to read
-      const isTemporaryChat = window.location.search.includes(
-        `${TEMPORARY_CHAT_QUERY_ID}=true`
-      )
+      const shouldStartTemporaryChat = draftIncognitoEnabled
 
       // Build message payload with attachments
       const files = attachments
@@ -368,18 +393,40 @@ const ChatInput = memo(function ChatInput({
         files: files.length > 0 ? files : [],
       }
 
-      if (isTemporaryChat) {
-        // For temporary chat, store message and navigate to temporary thread
+      if (shouldStartTemporaryChat) {
+        resetTemporaryChatState()
+
+        await createThread(
+          {
+            id: selectedModel?.id ?? defaultModel(selectedProvider),
+            provider: selectedProvider,
+          },
+          'Incognito Chat',
+          selectedAssistant,
+          undefined,
+          true
+        )
+
+        if (braveGroundingEnabled) {
+          transferBraveGrounding(DRAFT_CHAT_MODE_ID, TEMPORARY_CHAT_ID)
+        } else {
+          clearBraveGroundingForThread(DRAFT_CHAT_MODE_ID)
+        }
+
         sessionStorage.setItem(
-          SESSION_STORAGE_KEY.INITIAL_MESSAGE_TEMPORARY,
+          `${SESSION_STORAGE_PREFIX.INITIAL_MESSAGE}${TEMPORARY_CHAT_ID}`,
           JSON.stringify(messagePayload)
         )
-        sessionStorage.setItem('temp-chat-nav', 'true')
+
         // Transfer agent mode from home screen to temporary thread
         if (isAgentMode && agentModeKey !== TEMPORARY_CHAT_ID) {
           useAgentMode.getState().setAgentMode(TEMPORARY_CHAT_ID, true)
           useAgentMode.getState().removeThread(agentModeKey)
         }
+
+        clearDraftChatModes()
+        setSelectedAssistant(undefined)
+
         router.navigate({
           to: route.threadsDetail,
           params: { threadId: TEMPORARY_CHAT_ID },
@@ -428,6 +475,12 @@ const ChatInput = memo(function ChatInput({
         // Clear selected assistant after creating thread
         setSelectedAssistant(undefined)
 
+        if (braveGroundingEnabled) {
+          transferBraveGrounding(DRAFT_CHAT_MODE_ID, newThread.id)
+        } else {
+          clearBraveGroundingForThread(DRAFT_CHAT_MODE_ID)
+        }
+
         // Transfer agent mode from home screen to the new thread
         if (isAgentMode) {
           useAgentMode.getState().setAgentMode(newThread.id, true)
@@ -444,6 +497,8 @@ const ChatInput = memo(function ChatInput({
           to: route.threadsDetail,
           params: { threadId: newThread.id },
         })
+
+        clearDraftChatModes()
       }
 
       setPrompt('')
@@ -1898,18 +1953,61 @@ const ChatInput = memo(function ChatInput({
                   </Tooltip>
                 )}
 
-                {!effectiveAgentMode && selectedModel?.capabilities?.includes('web_search') && (
+                {!effectiveAgentMode && (!currentThreadId || isTemporaryThread) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="ghost" size="icon-xs">
-                        <IconWorld
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={!currentThreadId ? handleIncognitoToggle : undefined}
+                        disabled={isTemporaryThread}
+                        className={cn(incognitoActive && 'text-primary')}
+                      >
+                        <EyeOff
                           size={18}
-                          className="text-muted-foreground"
+                          className={cn(
+                            'text-muted-foreground',
+                            incognitoActive && 'text-primary'
+                          )}
                         />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>Web Search</p>
+                      <p>
+                        {isTemporaryThread
+                          ? 'Temporary incognito chat'
+                          : incognitoActive
+                            ? 'Incognito enabled for the next new chat'
+                            : 'Start next new chat in incognito mode'}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
+                {!effectiveAgentMode && selectedModel && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => toggleBraveGrounding(chatModeKey)}
+                        className={cn(braveGroundingEnabled && 'text-primary')}
+                      >
+                        <IconWorld
+                          size={18}
+                          className={cn(
+                            'text-muted-foreground',
+                            braveGroundingEnabled && 'text-primary'
+                          )}
+                        />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>
+                        {braveGroundingEnabled
+                          ? 'Brave grounding enabled'
+                          : 'Enable Brave grounding'}
+                      </p>
                     </TooltipContent>
                   </Tooltip>
                 )}
