@@ -54,6 +54,8 @@ import { ExtensionTypeEnum, VectorDBExtension } from '@janhq/core'
 import { ExtensionManager } from '@/lib/extension'
 import { Shimmer } from '@/components/ai-elements/shimmer'
 import { useAgentMode } from '@/hooks/useAgentMode'
+import { toast } from 'sonner'
+import { modelSettings } from '@/lib/predefined'
 
 const CHAT_STATUS = {
   STREAMING: 'streaming',
@@ -640,7 +642,7 @@ function ThreadDetail() {
   // Handle regenerate from any message (user or assistant)
   // - For user messages: keeps the user message, deletes all after, regenerates assistant response
   // - For assistant messages: finds the closest preceding user message, deletes from there
-  const handleRegenerate = (messageId?: string) => {
+  const handleRegenerate = useCallback((messageId?: string) => {
     const currentLocalMessages = useMessages.getState().getMessages(threadId)
 
     // If regenerating from a specific message, delete all messages after it
@@ -680,7 +682,7 @@ function ThreadDetail() {
     // Call the AI SDK regenerate function - it will handle truncating the UI messages
     // and generating a new response from the selected message
     regenerate(messageId ? { messageId } : undefined)
-  }
+  }, [deleteMessage, regenerate, threadId])
 
   // Handle edit message - updates the message and regenerates from it
   const handleEditMessage = useCallback(
@@ -754,66 +756,166 @@ function ThreadDetail() {
     [threadId, deleteMessage, chatMessages, setChatMessages]
   )
 
-  // Handler for increasing context size
+  const applyContextStrategy = useCallback(
+    async (
+      action: 'ctx_len' | 'context_shift',
+      options: { regenerate?: boolean } = {}
+    ) => {
+      if (!selectedModel) {
+        if (options.regenerate) {
+          setIsAutoIncreasingContext(false)
+        }
+        return
+      }
+
+      if (options.regenerate) {
+        setIsAutoIncreasingContext(true)
+      }
+
+      try {
+        const updateProvider = useModelProvider.getState().updateProvider
+        const provider = getProviderByName(selectedProvider)
+        if (!provider) {
+          if (options.regenerate) {
+            setIsAutoIncreasingContext(false)
+          }
+          return
+        }
+
+        const modelIndex = provider.models.findIndex(
+          (m) => m.id === selectedModel.id
+        )
+        if (modelIndex === -1) {
+          if (options.regenerate) {
+            setIsAutoIncreasingContext(false)
+          }
+          return
+        }
+
+        const model = provider.models[modelIndex]
+        let updatedModel = model
+        let successMessage = ''
+
+        if (action === 'ctx_len') {
+          // Increase context length in steps: <8192 -> 8192 -> 32768 -> x1.5
+          const currentCtxLen =
+            (model.settings?.ctx_len?.controller_props?.value as number) ?? 8192
+          let newCtxLen: number
+          if (currentCtxLen < 8192) {
+            newCtxLen = 8192
+          } else if (currentCtxLen < 32768) {
+            newCtxLen = 32768
+          } else {
+            newCtxLen = Math.round(currentCtxLen * 1.5)
+          }
+
+          updatedModel = {
+            ...model,
+            settings: {
+              ...model.settings,
+              ctx_len: {
+                key: model.settings?.ctx_len?.key ?? modelSettings.ctx_len.key,
+                title:
+                  model.settings?.ctx_len?.title ?? modelSettings.ctx_len.title,
+                description:
+                  model.settings?.ctx_len?.description ??
+                  modelSettings.ctx_len.description,
+                controller_type:
+                  model.settings?.ctx_len?.controller_type ??
+                  modelSettings.ctx_len.controller_type,
+                controller_props: {
+                  ...(model.settings?.ctx_len?.controller_props ??
+                    modelSettings.ctx_len.controller_props),
+                  value: newCtxLen,
+                },
+              },
+            },
+          }
+          successMessage = `Context size increased to ${newCtxLen.toLocaleString()} tokens.`
+        } else {
+          const currentValue = model.settings?.ctx_shift?.controller_props?.value
+          if (currentValue === true) {
+            if (options.regenerate) {
+              setIsAutoIncreasingContext(false)
+            }
+            if (!options.regenerate) {
+              toast.info('Context shift is already enabled for this model.')
+            }
+            return
+          }
+
+          updatedModel = {
+            ...model,
+            settings: {
+              ...model.settings,
+              ctx_shift: {
+                key: model.settings?.ctx_shift?.key ?? 'ctx_shift',
+                title: model.settings?.ctx_shift?.title ?? 'Context Shift',
+                description:
+                  model.settings?.ctx_shift?.description ??
+                  'Allow model to cut text in the beginning to accommodate new text in its memory',
+                controller_type:
+                  model.settings?.ctx_shift?.controller_type ?? 'checkbox',
+                controller_props: {
+                  ...(model.settings?.ctx_shift?.controller_props ?? {
+                    value: false,
+                  }),
+                  value: true,
+                },
+              },
+            },
+          }
+          successMessage =
+            'Context shift enabled. Older prompt text can be trimmed as the window fills.'
+        }
+
+        const updatedModels = [...provider.models]
+        updatedModels[modelIndex] = updatedModel as Model
+
+        updateProvider(provider.provider, {
+          models: updatedModels,
+        })
+
+        await serviceHub.models().stopModel(selectedModel.id)
+
+        if (options.regenerate) {
+          setTimeout(() => {
+            handleRegenerate()
+          }, 1000)
+        } else {
+          toast.success(successMessage)
+        }
+      } catch (strategyError) {
+        if (options.regenerate) {
+          setIsAutoIncreasingContext(false)
+        }
+        toast.error(
+          strategyError instanceof Error
+            ? strategyError.message
+            : 'Failed to update context strategy.'
+        )
+      }
+    },
+    [
+      selectedModel,
+      selectedProvider,
+      getProviderByName,
+      serviceHub,
+      handleRegenerate,
+    ]
+  )
+
   const handleContextSizeIncrease = useCallback(async () => {
-    if (!selectedModel) return
+    await applyContextStrategy('ctx_len', { regenerate: true })
+  }, [applyContextStrategy])
 
-    const updateProvider = useModelProvider.getState().updateProvider
-    const provider = getProviderByName(selectedProvider)
-    if (!provider) return
-
-    const modelIndex = provider.models.findIndex(
-      (m) => m.id === selectedModel.id
-    )
-    if (modelIndex === -1) return
-
-    const model = provider.models[modelIndex]
-
-    // Increase context length in steps: <8192 -> 8192 -> 32768 -> x1.5
-    const currentCtxLen =
-      (model.settings?.ctx_len?.controller_props?.value as number) ?? 8192
-    let newCtxLen: number
-    if (currentCtxLen < 8192) {
-      newCtxLen = 8192
-    } else if (currentCtxLen < 32768) {
-      newCtxLen = 32768
-    } else {
-      newCtxLen = Math.round(currentCtxLen * 1.5)
-    }
-
-    const updatedModel = {
-      ...model,
-      settings: {
-        ...model.settings,
-        ctx_len: {
-          ...(model.settings?.ctx_len ?? {}),
-          controller_props: {
-            ...(model.settings?.ctx_len?.controller_props ?? {}),
-            value: newCtxLen,
-          },
-        },
-      },
-    }
-
-    const updatedModels = [...provider.models]
-    updatedModels[modelIndex] = updatedModel as Model
-
-    updateProvider(provider.provider, {
-      models: updatedModels,
-    })
-
-    await serviceHub.models().stopModel(selectedModel.id)
-
-    setTimeout(() => {
-      handleRegenerate()
-    }, 1000)
-  }, [
-    selectedModel,
-    selectedProvider,
-    getProviderByName,
-    serviceHub,
-    handleRegenerate,
-  ])
+  const handleCompactAction = useCallback(
+    (action: 'ctx_len' | 'context_shift') => {
+      const shouldRegenerate = Boolean(error || contextLimitError)
+      void applyContextStrategy(action, { regenerate: shouldRegenerate })
+    },
+    [applyContextStrategy, contextLimitError, error]
+  )
 
   // Keep refs in sync so onFinish always calls the latest versions
   handleContextSizeIncreaseRef.current = handleContextSizeIncrease
@@ -959,6 +1061,7 @@ function ThreadDetail() {
           <ChatInput
             model={threadModel}
             onSubmit={handleSubmit}
+            onCompactAction={handleCompactAction}
             onStop={stop}
             chatStatus={status}
           />

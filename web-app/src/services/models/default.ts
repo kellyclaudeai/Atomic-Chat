@@ -3,6 +3,7 @@
  */
 
 import { sanitizeModelId } from '@/lib/utils'
+import { invoke } from '@tauri-apps/api/core'
 import {
   AIEngine,
   EngineManager,
@@ -26,6 +27,77 @@ import type {
 
 // TODO: Replace this with the actual provider later
 const defaultProvider = 'llamacpp'
+
+const parsePositiveInteger = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.round(value)
+  }
+
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed
+    }
+  }
+
+  return undefined
+}
+
+const extractContextWindowFromProps = (payload: unknown): number | undefined => {
+  if (!payload || typeof payload !== 'object') return undefined
+
+  const record = payload as Record<string, unknown>
+  const defaultGenerationSettings =
+    typeof record.default_generation_settings === 'object' &&
+    record.default_generation_settings !== null
+      ? (record.default_generation_settings as Record<string, unknown>)
+      : undefined
+
+  return (
+    parsePositiveInteger(defaultGenerationSettings?.n_ctx) ??
+    parsePositiveInteger(defaultGenerationSettings?.ctx_size) ??
+    parsePositiveInteger(defaultGenerationSettings?.context_window) ??
+    parsePositiveInteger(record.n_ctx) ??
+    parsePositiveInteger(record.ctx_size) ??
+    parsePositiveInteger(record.context_size) ??
+    parsePositiveInteger(record.context_window)
+  )
+}
+
+const extractContextWindowFromModelList = (
+  payload: unknown,
+  modelId: string
+): number | undefined => {
+  if (!payload || typeof payload !== 'object') return undefined
+
+  const record = payload as Record<string, unknown>
+  const data = Array.isArray(record.data) ? record.data : []
+  const modelEntry =
+    data.find((entry) => {
+      if (!entry || typeof entry !== 'object') return false
+      const entryRecord = entry as Record<string, unknown>
+      return (
+        entryRecord.id === modelId ||
+        (Array.isArray(entryRecord.aliases) &&
+          entryRecord.aliases.includes(modelId))
+      )
+    }) ?? data[0]
+
+  if (!modelEntry || typeof modelEntry !== 'object') return undefined
+
+  const entryRecord = modelEntry as Record<string, unknown>
+  const meta =
+    typeof entryRecord.meta === 'object' && entryRecord.meta !== null
+      ? (entryRecord.meta as Record<string, unknown>)
+      : undefined
+
+  return (
+    parsePositiveInteger(meta?.n_ctx) ??
+    parsePositiveInteger(meta?.context_window) ??
+    parsePositiveInteger(entryRecord.n_ctx) ??
+    parsePositiveInteger(entryRecord.context_window)
+  )
+}
 
 export class DefaultModelsService implements ModelsService {
   private getEngine(provider: string = defaultProvider) {
@@ -562,6 +634,56 @@ export class DefaultModelsService implements ModelsService {
         isValid: false,
         error: error instanceof Error ? error.message : 'Unknown error',
       }
+    }
+  }
+
+  async getRuntimeContextWindow(modelId: string): Promise<number | undefined> {
+    try {
+      const sessionInfo = await invoke<SessionInfo | null>(
+        'plugin:llamacpp|find_session_by_model',
+        { modelId }
+      )
+
+      if (!sessionInfo) {
+        return undefined
+      }
+
+      const headers = {
+        Authorization: `Bearer ${sessionInfo.api_key}`,
+        Origin: 'tauri://localhost',
+      }
+
+      try {
+        const propsResponse = await fetch(
+          `http://localhost:${sessionInfo.port}/props`,
+          { headers }
+        )
+
+        if (propsResponse.ok) {
+          const propsPayload = await propsResponse.json()
+          const contextWindow = extractContextWindowFromProps(propsPayload)
+          if (contextWindow) {
+            return contextWindow
+          }
+        }
+      } catch (error) {
+        console.debug('Failed to read llama.cpp runtime props:', error)
+      }
+
+      const modelsResponse = await fetch(
+        `http://localhost:${sessionInfo.port}/v1/models`,
+        { headers }
+      )
+
+      if (!modelsResponse.ok) {
+        return undefined
+      }
+
+      const modelsPayload = await modelsResponse.json()
+      return extractContextWindowFromModelList(modelsPayload, modelId)
+    } catch (error) {
+      console.warn(`Failed to resolve runtime context window for ${modelId}:`, error)
+      return undefined
     }
   }
 

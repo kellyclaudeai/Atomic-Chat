@@ -96,6 +96,9 @@ const mockServiceHub = {
     getActiveModels: vi.fn().mockResolvedValue([]),
     isModelSupported: vi.fn().mockResolvedValue('GREEN'),
     checkMmprojExists: vi.fn().mockResolvedValue(true), // cspell: disable-line
+    getTokensCount: vi.fn().mockResolvedValue(0),
+    getRuntimeContextWindow: vi.fn().mockResolvedValue(undefined),
+    stopModel: vi.fn().mockResolvedValue(undefined),
     stopAllModels: vi.fn().mockResolvedValue(undefined),
   }),
   assistants: () => ({

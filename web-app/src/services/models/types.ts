@@ -153,4 +153,5 @@ export interface ModelsService {
   ): Promise<'RED' | 'YELLOW' | 'GREEN' | 'GREY'>
   validateGgufFile(filePath: string): Promise<ModelValidationResult>
   getTokensCount(modelId: string, messages: ThreadMessage[]): Promise<number>
+  getRuntimeContextWindow(modelId: string): Promise<number | undefined>
 }

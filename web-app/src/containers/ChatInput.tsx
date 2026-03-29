@@ -18,7 +18,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ArrowRight, EyeOff, PlusIcon } from 'lucide-react'
+import { ArrowRight, EyeOff, Minimize2, PlusIcon } from 'lucide-react'
 import {
   IconPhoto,
   IconAtom,
@@ -34,6 +34,7 @@ import {
 import { BotIcon } from 'lucide-react'
 import { useTranslation } from '@/i18n/react-i18next-compat'
 import { useGeneralSetting } from '@/hooks/useGeneralSetting'
+import { useMessages } from '@/hooks/useMessages'
 import { useModelProvider } from '@/hooks/useModelProvider'
 
 import { useAppState } from '@/hooks/useAppState'
@@ -85,6 +86,7 @@ import { PromptVisionModel } from '@/containers/PromptVisionModel'
 import { useAgentMode } from '@/hooks/useAgentMode'
 import { useChatModes } from '@/hooks/useChatModes'
 import { clearDraftChatModes, resetTemporaryChatState } from '@/lib/chat-mode'
+import { TokenCounter } from '@/components/TokenCounter'
 
 type ChatInputProps = {
   className?: string
@@ -96,6 +98,7 @@ type ChatInputProps = {
     text: string,
     files?: Array<{ type: string; mediaType: string; url: string }>
   ) => void
+  onCompactAction?: (action: 'ctx_len' | 'context_shift') => void
   onStop?: () => void
   chatStatus?: ChatStatus
 }
@@ -105,6 +108,7 @@ const ChatInput = memo(function ChatInput({
   initialMessage,
   projectId,
   onSubmit,
+  onCompactAction,
   onStop,
   chatStatus,
 }: ChatInputProps) {
@@ -121,6 +125,13 @@ const ChatInput = memo(function ChatInput({
   const setPrompt = usePrompt((state) => state.setPrompt)
   const currentThreadId = useThreads((state) => state.currentThreadId)
   const currentThread = useThreads((state) => state.getCurrentThread())
+  const threadMessages = useMessages(
+    useCallback(
+      (state) =>
+        currentThreadId ? state.messages[currentThreadId] ?? [] : [],
+      [currentThreadId]
+    )
+  )
   const updateCurrentThreadAssistant = useThreads(
     (state) => state.updateCurrentThreadAssistant
   )
@@ -130,6 +141,9 @@ const ChatInput = memo(function ChatInput({
   const { t } = useTranslation()
   const spellCheckChatInput = useGeneralSetting(
     (state) => state.spellCheckChatInput
+  )
+  const tokenCounterCompact = useGeneralSetting(
+    (state) => state.tokenCounterCompact
   )
   useTools()
   const router = useRouter()
@@ -258,6 +272,35 @@ const ChatInput = memo(function ChatInput({
     (a) => a.type === 'document' && a.processing
   )
   const ingestingAny = attachments.some((a) => a.processing)
+  const uploadedImageFiles = useMemo(
+    () =>
+      attachments
+        .filter(
+          (
+            attachment
+          ): attachment is Attachment & {
+            type: 'image'
+            base64: string
+            dataUrl: string
+          } =>
+            attachment.type === 'image' &&
+            typeof attachment.base64 === 'string' &&
+            typeof attachment.dataUrl === 'string'
+        )
+        .map((attachment) => ({
+          name: attachment.name,
+          type: attachment.mimeType ?? 'image/jpeg',
+          size: attachment.size ?? 0,
+          base64: attachment.base64,
+          dataUrl: attachment.dataUrl,
+        })),
+    [attachments]
+  )
+  const showContextControls =
+    selectedProvider === 'llamacpp' && Boolean(selectedModel?.id)
+  const canCompactThread = Boolean(
+    onCompactAction && currentThreadId && (threadMessages.length > 0 || prompt.trim())
+  )
 
   const lastTransferredThreadId = useRef<string | null>(null)
 
@@ -340,6 +383,39 @@ const ChatInput = memo(function ChatInput({
   // Check if there are active MCP servers
   const hasActiveMCPServers =
     tools.filter((tool) => tool.server !== 'Jan Browser MCP').length > 0
+
+  const contextControls = showContextControls ? (
+    <div className="flex items-center gap-2">
+      {canCompactThread && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Compact thread"
+              className="text-muted-foreground"
+            >
+              <Minimize2 size={18} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" side="top">
+            <DropdownMenuItem
+              onSelect={() => onCompactAction?.('context_shift')}
+            >
+              Compact with Context Shift
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onCompactAction?.('ctx_len')}>
+              Grow Context Size
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      <TokenCounter
+        messages={threadMessages}
+        uploadedFiles={uploadedImageFiles}
+      />
+    </div>
+  ) : null
 
   // Get MCP extension and its custom component
   const extensionManager = ExtensionManager.getInstance()
@@ -995,7 +1071,7 @@ const ChatInput = memo(function ChatInput({
     )
   }
 
-  const getFileTypeFromExtension = (fileName: string): string => {
+  const getFileTypeFromExtension = useCallback((fileName: string): string => {
     const extension = fileName.toLowerCase().split('.').pop()
     switch (extension) {
       case 'jpg':
@@ -1006,7 +1082,7 @@ const ChatInput = memo(function ChatInput({
       default:
         return ''
     }
-  }
+  }, [])
 
   const formatBytes = (bytes?: number): string => {
     if (!bytes || bytes <= 0) return ''
@@ -1020,16 +1096,16 @@ const ChatInput = memo(function ChatInput({
     return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
   }
 
-  const hashBase64 = async (base64: string): Promise<string> => {
+  const hashBase64 = useCallback(async (base64: string): Promise<string> => {
     const binary = atob(base64)
     const bytes = new Uint8Array(binary.length)
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
     const hashBuffer = await crypto.subtle.digest('SHA-256', bytes)
     const hashArray = Array.from(new Uint8Array(hashBuffer))
     return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
-  }
+  }, [])
 
-  const processImageFiles = async (files: File[]) => {
+  const processImageFiles = useCallback(async (files: File[]) => {
     const maxSize = 10 * 1024 * 1024 // 10MB in bytes
     const oversizedFiles: string[] = []
     const invalidTypeFiles: string[] = []
@@ -1212,7 +1288,14 @@ const ChatInput = memo(function ChatInput({
     } else {
       setMessage('')
     }
-  }
+  }, [
+    attachmentsKey,
+    currentThreadId,
+    getFileTypeFromExtension,
+    hashBase64,
+    serviceHub,
+    setAttachmentsForThread,
+  ])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -2031,7 +2114,7 @@ const ChatInput = memo(function ChatInput({
             </div>
 
             <div className="flex items-center gap-2">
-              {/* TokenCounter hidden: custom llama.cpp server lacks /apply-template and /tokenize endpoints */}
+              {tokenCounterCompact ? contextControls : null}
 
               {isStreaming ? (
                 <Button
@@ -2079,7 +2162,9 @@ const ChatInput = memo(function ChatInput({
         </div>
       )}
 
-      {/* TokenCounter hidden: custom llama.cpp server lacks /apply-template and /tokenize endpoints */}
+      {!tokenCounterCompact && contextControls ? (
+        <div className="px-2 pb-2 flex justify-end">{contextControls}</div>
+      ) : null}
 
       <JanBrowserExtensionDialog
         open={extensionDialogOpen}

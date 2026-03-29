@@ -60,9 +60,32 @@ export const useTokensCount = (
   const latestCalculationRef = useRef<(() => Promise<void>) | null>(null)
   const requestIdRef = useRef(0)
   const isIncreasingContextSize = useRef<boolean>(false)
+  const [runtimeContextWindow, setRuntimeContextWindow] = useState<
+    number | undefined
+  >(undefined)
   const serviceHub = useServiceHub()
   const { selectedModel, selectedProvider } = useModelProvider()
   const { prompt } = usePrompt()
+
+  const configuredMaxTokens = useMemo(() => {
+    const maxTokensValue =
+      selectedModel?.settings?.ctx_len?.controller_props?.value
+
+    if (typeof maxTokensValue === 'string') {
+      const parsed = Number.parseInt(maxTokensValue, 10)
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+    }
+
+    if (
+      typeof maxTokensValue === 'number' &&
+      Number.isFinite(maxTokensValue) &&
+      maxTokensValue > 0
+    ) {
+      return maxTokensValue
+    }
+
+    return undefined
+  }, [selectedModel?.settings?.ctx_len?.controller_props?.value])
 
   // Create messages with current prompt for live calculation.
   // This mirrors the payload sent to token counting by appending the draft
@@ -131,6 +154,39 @@ export const useTokensCount = (
     })
   }, [messages, prompt, uploadedFiles])
 
+  useEffect(() => {
+    let isCancelled = false
+
+    if (!selectedModel?.id || selectedProvider !== 'llamacpp') {
+      setRuntimeContextWindow(undefined)
+      return
+    }
+
+    void serviceHub
+      .models()
+      .getRuntimeContextWindow(selectedModel.id)
+      .then((contextWindow) => {
+        if (!isCancelled) {
+          setRuntimeContextWindow(contextWindow)
+        }
+      })
+      .catch((error) => {
+        console.debug('Failed to resolve runtime context window:', error)
+        if (!isCancelled) {
+          setRuntimeContextWindow(undefined)
+        }
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [
+    selectedModel?.id,
+    selectedProvider,
+    serviceHub,
+    configuredMaxTokens,
+  ])
+
   // Debounced calculation that includes current prompt
   const runTokenCalculation = useCallback(async () => {
     const requestId = ++requestIdRef.current
@@ -162,14 +218,7 @@ export const useTokensCount = (
         return
       }
 
-      const maxTokensValue =
-        selectedModel?.settings?.ctx_len?.controller_props?.value
-      const maxTokensNum =
-        typeof maxTokensValue === 'string'
-          ? parseInt(maxTokensValue)
-          : typeof maxTokensValue === 'number'
-            ? maxTokensValue
-            : undefined
+      const maxTokensNum = runtimeContextWindow ?? configuredMaxTokens
 
       const percentage = maxTokensNum
         ? (tokenCount / maxTokensNum) * 100
@@ -201,7 +250,8 @@ export const useTokensCount = (
     selectedProvider,
     messagesWithPrompt,
     serviceHub,
-    selectedModel?.settings?.ctx_len?.controller_props?.value,
+    configuredMaxTokens,
+    runtimeContextWindow,
   ])
 
   useEffect(() => {
@@ -251,7 +301,8 @@ export const useTokensCount = (
     selectedProvider,
     messagesWithPrompt.length,
     messagesWithPrompt,
-    selectedModel?.settings?.ctx_len?.controller_props?.value,
+    configuredMaxTokens,
+    runtimeContextWindow,
   ])
 
   // Manual calculation function (for click events)
