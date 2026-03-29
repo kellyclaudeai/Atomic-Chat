@@ -386,7 +386,7 @@ fn grounded_sources(response: &BraveResponse) -> Vec<GroundedSource> {
                             .age
                             .as_ref()
                             .and_then(|ages| ages.first().cloned())
-                            .and_then(trim_or_none)
+                            .and_then(|age| trim_or_none(Some(age)))
                     }),
                     snippets,
                 },

@@ -99,6 +99,21 @@ function parseBuildNumber(version: string): number | null {
   return match ? parseInt(match[1], 10) : null
 }
 
+function isAbsoluteModelPath(modelPath: string): boolean {
+  return modelPath.startsWith('/') || /^[A-Za-z]:/.test(modelPath)
+}
+
+async function resolveModelPath(
+  janDataFolderPath: string,
+  modelPath: string
+): Promise<string> {
+  if (isAbsoluteModelPath(modelPath)) {
+    return modelPath
+  }
+
+  return joinPath([janDataFolderPath, modelPath])
+}
+
 // Folder structure for llamacpp extension:
 // <Jan's data folder>/llamacpp
 //  - models/<modelId>/
@@ -849,10 +864,10 @@ export default class llamacpp_extension extends AIEngine {
     let isEmbedding = false
     try {
       const janDataFolderPath = await getJanDataFolderPath()
-      const fullModelPath = await joinPath([
+      const fullModelPath = await resolveModelPath(
         janDataFolderPath,
-        modelConfig.model_path,
-      ])
+        modelConfig.model_path
+      )
 
       if (await fs.existsSync(fullModelPath)) {
         const metadata = await readGgufMetadata(fullModelPath)
@@ -1331,7 +1346,7 @@ export default class llamacpp_extension extends AIEngine {
 
     // Validate GGUF files
     const janDataFolderPath = await getJanDataFolderPath()
-    const fullModelPath = await joinPath([janDataFolderPath, modelPath])
+    const fullModelPath = await resolveModelPath(janDataFolderPath, modelPath)
     let isEmbedding = false
 
     try {
@@ -1349,7 +1364,10 @@ export default class llamacpp_extension extends AIEngine {
 
       // Validate mmproj file if present
       if (mmprojPath) {
-        const fullMmprojPath = await joinPath([janDataFolderPath, mmprojPath])
+        const fullMmprojPath = await resolveModelPath(
+          janDataFolderPath,
+          mmprojPath
+        )
         const mmprojMetadata = await readGgufMetadata(fullMmprojPath)
         logger.info(
           `Mmproj GGUF validation successful: version ${mmprojMetadata.version}, tensors: ${mmprojMetadata.tensor_count}`
@@ -1368,7 +1386,7 @@ export default class llamacpp_extension extends AIEngine {
     let size_bytes = (await fs.fileStat(fullModelPath)).size
     if (mmprojPath) {
       size_bytes += (
-        await fs.fileStat(await joinPath([janDataFolderPath, mmprojPath]))
+        await fs.fileStat(await resolveModelPath(janDataFolderPath, mmprojPath))
       ).size
     }
 
@@ -1606,15 +1624,18 @@ export default class llamacpp_extension extends AIEngine {
     if (this.llamacpp_env) this.parseEnvFromString(envs, this.llamacpp_env)
 
     // Resolve model path
-    const modelPath = await joinPath([
+    const modelPath = await resolveModelPath(
       janDataFolderPath,
-      modelConfig.model_path,
-    ])
+      modelConfig.model_path
+    )
 
     // Resolve mmproj path if present
     let mmprojPath: string | undefined = undefined
     if (modelConfig.mmproj_path) {
-      mmprojPath = await joinPath([janDataFolderPath, modelConfig.mmproj_path])
+      mmprojPath = await resolveModelPath(
+        janDataFolderPath,
+        modelConfig.mmproj_path
+      )
     }
 
     // Migrate old env vars
@@ -2177,10 +2198,10 @@ export default class llamacpp_extension extends AIEngine {
     })
     // model option is required
     // NOTE: model_path and mmproj_path can be either relative to Jan's data folder or absolute path
-    const modelPath = await joinPath([
+    const modelPath = await resolveModelPath(
       janDataFolderPath,
-      modelConfig.model_path,
-    ])
+      modelConfig.model_path
+    )
     return (await readGgufMetadata(modelPath)).metadata?.[
       'tokenizer.chat_template'
     ]?.includes('tools')
